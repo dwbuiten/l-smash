@@ -484,13 +484,6 @@ lsmash_extended_box_type_t lsmash_form_extended_box_type
     const uint8_t id[12]
 );
 
-/* Return box type that consists of combination of given compact and extended box type. */
-lsmash_box_type_t lsmash_form_box_type
-(
-    lsmash_compact_box_type_t  type,
-    lsmash_extended_box_type_t user
-);
-
 #define LSMASH_ISO_BOX_TYPE_INITIALIZER( x )  { x, { x, { 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 } } }
 #define LSMASH_QTFF_BOX_TYPE_INITIALIZER( x ) { x, { x, { 0x0F, 0x11, 0x4D, 0xA5, 0xBF, 0x4E, 0xF2, 0xC4, 0x8C, 0x6A, 0xA1, 0x1E } } }
 lsmash_box_type_t lsmash_form_iso_box_type( lsmash_compact_box_type_t type );
