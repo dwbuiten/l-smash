@@ -587,7 +587,7 @@ int64_t lsmash_read_file
             return (int64_t)LSMASH_ERR_MEMORY_ALLOC;
         file->importer = importer;
         lsmash_importer_set_file( importer, file );
-        ret = lsmash_importer_find( importer, "ISOBMFF/QTFF", !file->bs->unseekable );
+        ret = lsmash_importer_find( importer, "ISOBMFF/QTFF", 0 );
         if( ret < 0 )
             return ret;
         if( param )
