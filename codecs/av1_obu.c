@@ -36,6 +36,28 @@
 #define OBU_REDUNDANT_FRAME_HEADER 7
 #define OBU_PADDING 15
 
+/* GIANT HACK BECAUSE I WAS LAZY - CONVERT TO BS */
+static uint64_t obu_av1_leb128_buf
+(
+    uint8_t *buf,
+    uint32_t *consumed
+)
+{
+    uint64_t value = 0;
+    *consumed = 0;
+
+    for( uint64_t i = 0; i < 8; i++ )
+    {
+        uint8_t b = buf[*consumed];
+        value |= ((uint64_t)(b & 0x7F)) << (i * 7);
+        (*consumed)++;
+        if ((b & 0x80) != 0x80)
+            break;
+    }
+
+    return value;
+}
+
 static uint64_t obu_av1_leb128
 (
     lsmash_bs_t *bs,
@@ -364,7 +386,7 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
 
         switch( obutype )
         {
-            case 1:
+            case OBU_SEQUENCE_HEADER:
             {
                 uint32_t headersize = consumed + extension + 1;
                 uint8_t *obubuf = lsmash_malloc( obusize + headersize );
@@ -397,6 +419,9 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
 
                 break;
             }
+            case OBU_METADATA:
+                printf("TODO: NEED TO COPY THIS INTO CONFIGOBUS\n");
+                assert(0);
             default:
                 off += obusize;
                 break;
@@ -404,4 +429,77 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
     }
 
     return param;
+}
+
+static int include_obu(uint8_t obutype)
+{
+    return obutype == OBU_SEQUENCE_HEADER ||
+           obutype == OBU_FRAME_HEADER ||
+           obutype == OBU_TILE_GROUP ||
+           obutype == OBU_METADATA ||
+           obutype == OBU_FRAME;
+}
+
+uint8_t *obu_av1_assemble_sample
+(
+    uint8_t *packetbuf,
+    uint32_t length,
+    uint32_t *samplelength
+)
+{
+    uint8_t *samplebuf = NULL;
+    *samplelength = 0;
+    uint32_t offset = 0;
+
+    while( offset < length )
+    {
+        uint8_t temp8 = packetbuf[offset];
+        uint8_t obutype = (temp8 & 0x78) >> 3;
+        int extension = (((temp8 & 0x04) >> 2) == 1);
+        int hassize = (((temp8 & 0x02) >> 1) == 1);
+
+        offset++;
+        if( extension )
+            offset++;
+        if( !hassize )
+        {
+            if( include_obu(obutype) )
+            {
+                uint8_t *newbuf = lsmash_realloc( samplebuf, (*samplelength) + extension + 1 );
+                if( !newbuf )
+                {
+                    lsmash_free( samplebuf );
+                    return NULL;
+                }
+                samplebuf = newbuf;
+                memcpy(samplebuf + (*samplelength), &packetbuf[offset - (extension + 1)], extension + 1);
+                (*samplelength) += extension + 1;
+            }
+            continue;
+        }
+
+        uint32_t consumed = 0;
+        uint64_t obusize = obu_av1_leb128_buf(&packetbuf[offset], &consumed);
+        offset += consumed;
+
+        if( !include_obu(obutype) )
+        {
+            offset += obusize;
+            continue;
+        }
+
+        uint32_t total_size = consumed + obusize + extension + 1;
+        uint8_t *newbuf = lsmash_realloc( samplebuf, (*samplelength) + total_size );
+        if( !newbuf )
+        {
+            lsmash_free( samplebuf );
+            return NULL;
+        }
+        samplebuf = newbuf;
+        memcpy(samplebuf + (*samplelength), &packetbuf[offset - consumed - extension - 1], total_size);
+        offset += obusize;
+        (*samplelength) += total_size;
+    }
+
+    return samplebuf;
 }

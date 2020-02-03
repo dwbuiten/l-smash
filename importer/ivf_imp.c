@@ -121,18 +121,37 @@ static int ivf_importer_get_accessunit( importer_t *importer, uint32_t track_num
         importer->status = IMPORTER_ERROR;
         return err;
     }
-    lsmash_sample_t *sample = lsmash_create_sample( ivf_imp->au_length );
-    if( !sample )
+    uint8_t *packetbuf = lsmash_malloc( ivf_imp->au_length );
+    if( !packetbuf )
+    {
+        importer->status = IMPORTER_ERROR;
         return LSMASH_ERR_MEMORY_ALLOC;
-    *p_sample = sample;
-    if( lsmash_bs_get_bytes_ex( importer->bs, ivf_imp->au_length, sample->data ) != ivf_imp->au_length )
+    }
+    if( lsmash_bs_get_bytes_ex( importer->bs, ivf_imp->au_length, packetbuf ) != ivf_imp->au_length )
+    {
+        lsmash_free( packetbuf );
+        importer->status = IMPORTER_ERROR;
+        return LSMASH_ERR_INVALID_DATA;
+    }
+    uint32_t samplesize;
+    uint8_t *samplebuf = obu_av1_assemble_sample( packetbuf, ivf_imp->au_length, &samplesize );
+    lsmash_free( packetbuf );
+    if( !samplebuf )
     {
         importer->status = IMPORTER_ERROR;
         return LSMASH_ERR_INVALID_DATA;
     }
+    lsmash_sample_t *sample = lsmash_create_sample( samplesize );
+    if( !sample ) {
+        lsmash_free( samplebuf );
+        return LSMASH_ERR_MEMORY_ALLOC;
+    }
+    *p_sample = sample;
+    memcpy( sample->data, samplebuf, samplesize );
+    lsmash_free( samplebuf );
     if( !ivf_imp->first_pts_delta )
         ivf_imp->first_pts_delta = ivf_imp->pts;
-    sample->length = ivf_imp->au_length;
+    sample->length = samplesize;
     sample->dts    = ivf_imp->pts;
     sample->cts    = ivf_imp->pts;
     sample->prop   = prop;
