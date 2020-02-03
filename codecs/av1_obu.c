@@ -20,14 +20,12 @@
 
 /* This file is available under an ISC license. */
 
-
 #include "common/internal.h" /* must be placed first */
 
 #include "codecs/av1.h"
 
 #include <inttypes.h>
 #include <string.h>
-#include <stdlib.h>
 
 #define OBU_SEQUENCE_HEADER 1
 #define OBU_TEMPORAL_DELIMITER 2
@@ -60,8 +58,276 @@ static uint64_t obu_av1_leb128
     return value;
 }
 
+static uint32_t obu_av1_vlc
+(
+    lsmash_bits_t *bits
+)
+{
+    uint32_t leadingzeroes = 0;
+    while( leadingzeroes < 32 )
+    {
+        int b = (int) lsmash_bits_get( bits, 1 );
+        if( b != 0 )
+            break;
+        leadingzeroes++;
+    }
+    assert( leadingzeroes != 32 ); /* lazy... */
+    uint32_t val = lsmash_bits_get( bits, leadingzeroes );
+    return val + ((1 << leadingzeroes) - 1);
+}
+
+static void obu_parse_color_config( lsmash_bits_t *bits, lsmash_av1_specific_parameters_t *param )
+{
+    int BitDepth;
+
+    param->high_bitdepth = (uint8_t) lsmash_bits_get( bits, 1 );
+    if( param->seq_profile == 2 && param->high_bitdepth )
+    {
+        param->twelve_bit = (uint8_t) lsmash_bits_get( bits, 1 );
+        BitDepth = param->twelve_bit ? 12 : 10;
+    }
+    else if( param->seq_profile <= 2)
+    {
+        BitDepth = param->high_bitdepth ? 10 : 8;
+    }
+    if( param->seq_profile == 1 )
+        param->monochrome = 0;
+    else
+        param->monochrome = (uint8_t) lsmash_bits_get( bits, 1 );
+    /* NumPlanes = param->monochrome ? 1 : 3; */
+    int color_description_present_flag = (int) lsmash_bits_get( bits, 1 );
+    uint8_t color_primaries;
+    uint8_t transfer_characteristics;
+    uint8_t matrix_coefficients;
+    if( color_description_present_flag )
+    {
+        color_primaries = (int) lsmash_bits_get( bits, 8 );
+        transfer_characteristics = (int) lsmash_bits_get( bits, 8 );
+        matrix_coefficients = (int) lsmash_bits_get( bits, 8 );
+    }
+    else
+    {
+        /* Unspecified */
+        color_primaries = 2;
+        transfer_characteristics = 2;
+        matrix_coefficients = 2;
+    }
+    if( param->monochrome )
+    {
+        /* color_range */
+        lsmash_bits_get( bits, 1 );
+        param->chroma_subsampling_x = 1;
+        param->chroma_subsampling_y = 1;
+        param->chroma_sample_position = LSMASH_AV1_CSP_UNKNOWN;
+        /* separate_uv_delta_q = 0 */
+        return;
+    }
+    else if( color_primaries == 1 && transfer_characteristics == 13 && matrix_coefficients == 0 )
+    {
+        /* color_range = 1 */
+        param->chroma_subsampling_x = 0;
+        param->chroma_subsampling_y = 0;
+    }
+    else
+    {
+        /* color_range */
+        lsmash_bits_get( bits, 1 );
+        if( param->seq_profile == 0 )
+        {
+            param->chroma_subsampling_x = 1;
+            param->chroma_subsampling_y = 1;
+        }
+        else if( param->seq_profile == 1 )
+        {
+            param->chroma_subsampling_x = 0;
+            param->chroma_subsampling_y = 0;
+        }
+        else
+        {
+            if( BitDepth == 12 )
+            {
+                param->chroma_subsampling_x = lsmash_bits_get( bits, 1 );
+                if( param->chroma_subsampling_x )
+                    param->chroma_subsampling_y = lsmash_bits_get( bits, 1 );
+                else
+                    param->chroma_subsampling_y = 0;
+            }
+            else
+            {
+                param->chroma_subsampling_x = 1;
+                param->chroma_subsampling_y = 0;
+            }
+        }
+        if( param->chroma_subsampling_x && param->chroma_subsampling_y )
+            param->chroma_sample_position =  lsmash_bits_get( bits, 2 );
+    }
+    /* separate_uv_delta_q */
+}
+
 static int obu_parse_seq_header( uint8_t *obubuf, uint32_t obusize, lsmash_av1_specific_parameters_t *param )
 {
+    lsmash_bits_t *bits = lsmash_bits_adhoc_create();
+    if( !bits )
+        return -1;
+
+    int ret = lsmash_bits_import_data( bits, obubuf, obusize );
+    if( ret < 0 )
+    {
+        lsmash_bits_adhoc_cleanup( bits );
+        return -1;
+    }
+
+    int decoder_model_info_present_flag = 0;
+    int buffer_delay_length_minus_1 = 0;
+
+    param->seq_profile = (uint8_t) lsmash_bits_get( bits, 3 );
+
+    int still_picture = (int) lsmash_bits_get( bits, 1 );
+    int reduced_still_picture_header = (int) lsmash_bits_get( bits, 1 );
+    if( still_picture || reduced_still_picture_header )
+    {
+        lsmash_bits_adhoc_cleanup( bits );
+        assert(0);
+        return -1;
+    }
+
+    /* Skip timing info. */
+    int timing_info_present_flag = lsmash_bits_get( bits, 1 );
+    if( timing_info_present_flag )
+    {
+        /* num_units_in_display_tick */
+        lsmash_bits_get( bits, 16 );
+        lsmash_bits_get( bits, 16 );
+        /* time_scale */
+        lsmash_bits_get( bits, 16 );
+        lsmash_bits_get( bits, 16 );
+        int equal_picture_interval = (int) lsmash_bits_get( bits, 1 );
+        if( equal_picture_interval )
+            obu_av1_vlc(bits);
+        decoder_model_info_present_flag = (int) lsmash_bits_get( bits, 1 );
+        if( decoder_model_info_present_flag ) {
+            buffer_delay_length_minus_1 = (int) lsmash_bits_get( bits, 5 );
+            /* num_units_in_decoding_tick */
+            lsmash_bits_get( bits, 16 );
+            lsmash_bits_get( bits, 16 );
+            /* buffer_removal_time_length_minus_1 */
+            lsmash_bits_get( bits, 5 );
+            /* frame_presentation_time_length_minus_1 */
+            lsmash_bits_get( bits, 5 );
+        }
+    }
+    param->initial_presentation_delay_present = (uint8_t) lsmash_bits_get( bits, 1 );
+    int operating_points_cnt_minus_1 = (int) lsmash_bits_get( bits, 5 );
+    for( int i = 0; i <= operating_points_cnt_minus_1; i++ )
+    {
+        /* operating_point_idc */
+        lsmash_bits_get( bits, 12 );
+        uint8_t seq_level_idx = (uint8_t) lsmash_bits_get( bits, 5 );
+        if( i == 0 )
+            param->seq_level_idx_0 = seq_level_idx;
+        if( seq_level_idx > 7 )
+        {
+            uint8_t seq_tier = (uint8_t) lsmash_bits_get( bits, 1 );
+            if( i == 0 )
+                param->seq_tier_0 = seq_tier;
+        }
+        if( decoder_model_info_present_flag )
+        {
+            int decoder_model_present_for_this_op = (int) lsmash_bits_get( bits, 1 );
+            if( decoder_model_present_for_this_op )
+            {
+                /* decoder_buffer_delay */
+                lsmash_bits_get( bits, buffer_delay_length_minus_1 + 1 );
+                /* encoder_buffer_delay */
+                lsmash_bits_get( bits, buffer_delay_length_minus_1 + 1 );
+                /* low_delay_mode_flag */
+                lsmash_bits_get( bits, 1 );
+            }
+        }
+    }
+    if( param->initial_presentation_delay_present )
+    {
+        int initial_display_delay_present_for_this_op = (int) lsmash_bits_get( bits, 1 );
+        if( initial_display_delay_present_for_this_op )
+        {
+            param->initial_presentation_delay_minus_one = (uint8_t) lsmash_bits_get( bits, 4 );
+        }
+    }
+    int frame_width_bits_minus_1 = (int) lsmash_bits_get( bits, 4 );
+    int frame_height_bits_minus_1 = (int) lsmash_bits_get( bits, 4 );
+    /* max_frame_width_minus_1 */
+    lsmash_bits_get( bits, frame_width_bits_minus_1 + 1 );
+    /* max_frame_height_minus_1 */
+    lsmash_bits_get( bits, frame_height_bits_minus_1 + 1 );
+
+    /* Always read because we check for reduced_still_picture_header already */
+    int frame_id_numbers_present_flag = (int) lsmash_bits_get( bits, 1 );
+    if( frame_id_numbers_present_flag )
+    {
+        /* delta_frame_id_length_minus_2 */
+        lsmash_bits_get( bits, 4 );
+        /* additional_frame_id_length_minus_1 */
+        lsmash_bits_get( bits, 3 );
+    }
+
+    /* use_128x128_superblock */
+    lsmash_bits_get( bits, 1 );
+    /* enable_filter_intra */
+    lsmash_bits_get( bits, 1 );
+    /* enable_intra_edge_filter */
+    lsmash_bits_get( bits, 1 );
+
+    /* Ditto to above */
+    /* enable_interintra_compound */
+    lsmash_bits_get( bits, 1 );
+    /* enable_masked_compound */
+    lsmash_bits_get( bits, 1 );
+    /* enable_warped_motion */
+    lsmash_bits_get( bits, 1 );
+    /* enable_dual_filter */
+    lsmash_bits_get( bits, 1 );
+    int enable_order_hint = (int) lsmash_bits_get( bits, 1 );
+    if( enable_order_hint )
+    {
+        /* enable_jnt_comp */
+        lsmash_bits_get( bits, 1 );
+        /* enable_jnt_comp */
+        lsmash_bits_get( bits, 1 );
+    }
+    int seq_choose_screen_content_tools = (int) lsmash_bits_get( bits, 1 );
+    int seq_force_screen_content_tools = 0;
+    if( seq_choose_screen_content_tools )
+        seq_force_screen_content_tools = 2;
+    else
+        seq_force_screen_content_tools = (int) lsmash_bits_get( bits, 1 );
+    if( seq_force_screen_content_tools > 0 )
+    {
+        int seq_choose_integer_mv = (int) lsmash_bits_get( bits, 1 );
+        if( seq_choose_integer_mv )
+        {
+            /* seq_force_integer_mv */
+             lsmash_bits_get( bits, 1 );
+        }
+    }
+    if( enable_order_hint )
+    {
+        /* order_hint_bits_minus_1 */
+        lsmash_bits_get( bits, 3 );
+    }
+
+    /* enable_superres */
+    lsmash_bits_get( bits, 1 );
+    /* enable_cdef */
+    lsmash_bits_get( bits, 1 );
+    /* enable_restoration */
+    lsmash_bits_get( bits, 1 );
+
+    obu_parse_color_config( bits, param );
+
+    /* film_grain_params_present */
+
+    lsmash_bits_adhoc_cleanup( bits );
+
     return 0;
 }
 
@@ -77,7 +343,6 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
         return NULL;
 
     uint32_t off = 0;
-    printf("\n len = %d\n", length);
 
     while( off < length )
     {
@@ -101,16 +366,17 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
         {
             case 1:
             {
-                uint8_t *obubuf = lsmash_malloc( obusize );
+                uint32_t headersize = consumed + extension + 1;
+                uint8_t *obubuf = lsmash_malloc( obusize + headersize );
                 if( !obubuf ) {
                     av1_destruct_specific_data( param );
                     return NULL;
                 }
-                for( uint32_t i = 0; i < obusize; i++ )
-                    obubuf[i] = lsmash_bs_show_byte( bs, off + offset + i );
+                for( uint32_t i = 0; i < obusize + headersize; i++ )
+                    obubuf[i] = lsmash_bs_show_byte( bs, off + offset + i - headersize );
                 off += obusize;
 
-                int ret = obu_parse_seq_header( obubuf, obusize, param );
+                int ret = obu_parse_seq_header( obubuf + headersize, obusize, param );
                 if( ret < 0 ) {
                     lsmash_free(obubuf);
                     av1_destruct_specific_data( param );
@@ -118,7 +384,7 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
                 }
 
                 uint32_t oldpos = param->configOBUs.sz;
-                param->configOBUs.sz += obusize;
+                param->configOBUs.sz += obusize + headersize;
                 uint8_t *newdata = lsmash_realloc( param->configOBUs.data, param->configOBUs.sz );
                 if( !newdata ) {
                     lsmash_free(obubuf);
@@ -126,9 +392,9 @@ lsmash_av1_specific_parameters_t *obu_av1_parse_seq_header
                     return NULL;
                 }
                 param->configOBUs.data = newdata;
-                memcpy( param->configOBUs.data + oldpos, obubuf, obusize );
+                memcpy( param->configOBUs.data + oldpos, obubuf, obusize + headersize );
                 lsmash_free( obubuf );
-                
+
                 break;
             }
             default:

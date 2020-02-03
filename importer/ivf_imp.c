@@ -176,19 +176,9 @@ static lsmash_video_summary_t *ivf_create_summary( ivf_global_header_t *gh, lsma
     }
 
     lsmash_av1_specific_parameters_t *src_param = (lsmash_av1_specific_parameters_t *) specific->data.structured;
-
-    // XXX: Hardcoded until OBU parsing exists.
-    src_param->seq_profile = 0;
-    src_param->seq_level_idx_0 = 31;
-    src_param->seq_tier_0 = 0;
-    src_param->high_bitdepth = 0;
-    src_param->twelve_bit = 0;
-    src_param->monochrome = 0;
-    src_param->chroma_subsampling_x = 1;
-    src_param->chroma_subsampling_y = 1;
-    src_param->chroma_sample_position = 0;
-    src_param->configOBUs.sz = 0;
-    src_param->configOBUs.data = NULL;
+    *src_param = *params; /* from our probe */
+    params->configOBUs.sz = 0;
+    params->configOBUs.data = NULL; /* horrible hack. so horrible. but we own this pointer now. */
 
     lsmash_codec_specific_t *dst_cs = lsmash_convert_codec_specific_format( specific, LSMASH_CODEC_SPECIFIC_FORMAT_STRUCTURED );
     lsmash_destroy_codec_specific_data( specific );
@@ -261,11 +251,11 @@ static int ivf_importer_probe( importer_t *importer )
     /* Parse the first packet to get pixel aspect ratio and color information. */
     uint32_t au_length = lsmash_bs_show_le32( bs, 0 );
     lsmash_av1_specific_parameters_t *params = obu_av1_parse_seq_header( bs, au_length, 12 );
-/*    if ( !params )
+    if ( !params )
     {
         err = LSMASH_ERR_INVALID_DATA;
         goto fail;
-    }*/
+    }
 
     lsmash_video_summary_t *summary = ivf_create_summary( &ivf_imp->global_header, params );
     av1_destruct_specific_data( params );
