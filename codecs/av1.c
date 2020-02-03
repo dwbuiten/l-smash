@@ -151,19 +151,19 @@ uint8_t *lsmash_create_av1_specific_info
     lsmash_bs_put_byte( bs, temp8 );
     temp8 = (param->seq_profile << 5)
           | (param->seq_level_idx_0 & 0x1F);
-    lsmash_bs_put_be32( bs, temp8 );
-    temp8 = ((param->seq_tier_0           << 7))
-          | ((param->high_bitdepth        << 6) & 0x01)
-          | ((param->twelve_bit           << 5) & 0x01)
-          | ((param->monochrome           << 4) & 0x01)
-          | ((param->chroma_subsampling_x << 3) & 0x01)
-          | ((param->chroma_subsampling_y << 2) & 0x01)
+    lsmash_bs_put_byte( bs, temp8 );
+    temp8 = ((param->seq_tier_0           << 7) & (1 << 7))
+          | ((param->high_bitdepth        << 6) & (1 << 6))
+          | ((param->twelve_bit           << 5) & (1 << 5))
+          | ((param->monochrome           << 4) & (1 << 4))
+          | ((param->chroma_subsampling_x << 3) & (1 << 3))
+          | ((param->chroma_subsampling_y << 2) & (1 << 2))
           | ( param->chroma_sample_position     & 0x03);
-    lsmash_bs_put_be32( bs, temp8 );
+    lsmash_bs_put_byte( bs, temp8 );
     if( param->initial_presentation_delay_present )
-        lsmash_bs_put_be32( bs, 0x10 | (param->initial_presentation_delay_minus_one & 0x0F) );
+        lsmash_bs_put_byte( bs, 0x10 | (param->initial_presentation_delay_minus_one & 0x0F) );
     else
-        lsmash_bs_put_be32( bs, 0 );
+        lsmash_bs_put_byte( bs, 0 );
     /* configOBUs */
     if ( param->configOBUs.sz && param->configOBUs.data )
         lsmash_bs_put_bytes( bs, param->configOBUs.sz, param->configOBUs.data );
