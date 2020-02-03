@@ -31,6 +31,7 @@
     Indeo Video Format (IVF) importer
 **********************************************************************************/
 #include "codecs/av1.h"
+#include "codecs/av1_obu.h"
 
 #define IVF_LE_4CC( a, b, c, d ) (((d)<<24) | ((c)<<16) | ((b)<<8) | (a))
 
@@ -156,7 +157,7 @@ static lsmash_codec_type_t ivf_get_codec_type
     }
 }
 
-static lsmash_video_summary_t *ivf_create_summary( ivf_global_header_t *gh )
+static lsmash_video_summary_t *ivf_create_summary( ivf_global_header_t *gh, lsmash_av1_specific_parameters_t *params )
 {
     lsmash_video_summary_t *summary = (lsmash_video_summary_t *)lsmash_create_summary( LSMASH_SUMMARY_TYPE_VIDEO );
     if( !summary )
@@ -258,9 +259,16 @@ static int ivf_importer_probe( importer_t *importer )
 //        ivf_imp->get_access_unit = av1_get_access_unit;
     lsmash_bs_skip_bytes( bs, gh->header_length );
     /* Parse the first packet to get pixel aspect ratio and color information. */
-//    if( (err = ivf_importer_get_access_unit( bs, ivf_imp )) < 0 )
-//        goto fail;
-    lsmash_video_summary_t *summary = ivf_create_summary( &ivf_imp->global_header );
+    uint32_t au_length = lsmash_bs_show_le32( bs, 0 );
+    lsmash_av1_specific_parameters_t *params = obu_av1_parse_seq_header( bs, au_length, 12 );
+/*    if ( !params )
+    {
+        err = LSMASH_ERR_INVALID_DATA;
+        goto fail;
+    }*/
+
+    lsmash_video_summary_t *summary = ivf_create_summary( &ivf_imp->global_header, params );
+    av1_destruct_specific_data( params );
     if( !summary )
     {
         lsmash_cleanup_summary( (lsmash_summary_t *)summary );
