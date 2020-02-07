@@ -134,13 +134,16 @@ static int ivf_importer_get_accessunit( importer_t *importer, uint32_t track_num
         return LSMASH_ERR_INVALID_DATA;
     }
     uint32_t samplesize;
-    uint8_t *samplebuf = obu_av1_assemble_sample( packetbuf, ivf_imp->au_length, &samplesize );
+    int issync;
+    uint8_t *samplebuf = obu_av1_assemble_sample( packetbuf, ivf_imp->au_length, &samplesize, &issync );
     lsmash_free( packetbuf );
     if( !samplebuf )
     {
         importer->status = IMPORTER_ERROR;
         return LSMASH_ERR_INVALID_DATA;
     }
+    if( issync )
+        prop.ra_flags = ISOM_SAMPLE_RANDOM_ACCESS_FLAG_SYNC;
     lsmash_sample_t *sample = lsmash_create_sample( samplesize );
     if( !sample ) {
         lsmash_free( samplebuf );

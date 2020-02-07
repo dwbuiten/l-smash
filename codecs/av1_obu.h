@@ -9,5 +9,6 @@ uint8_t *obu_av1_assemble_sample
 (
     uint8_t *packetbuf,
     uint32_t length,
-    uint32_t *samplelength
+    uint32_t *samplelength,
+    int *issync
 );

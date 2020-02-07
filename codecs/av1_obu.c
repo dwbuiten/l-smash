@@ -440,16 +440,53 @@ static int include_obu(uint8_t obutype)
            obutype == OBU_FRAME;
 }
 
+static int obu_av1_parse_uncompressed_frame_type
+(
+    uint8_t *obubuf,
+    uint32_t obusize
+)
+{
+    lsmash_bits_t *bits = lsmash_bits_adhoc_create();
+    if( !bits )
+        return 0;
+
+    int ret = lsmash_bits_import_data( bits, obubuf, obusize );
+    if( ret < 0 )
+    {
+        lsmash_bits_adhoc_cleanup( bits );
+        return 0;
+    }
+
+    /* SeenFrameHeader should be zero once we call this func. */
+    /* uncompressed_header() */
+    /* reduced_still_picture_header will be zero because we fail if we spot it anyway... HACK. */
+
+    int show_existing_frame = lsmash_bits_get( bits, 1 );
+    if( !show_existing_frame )
+    {
+        int frame_type = lsmash_bits_get( bits, 2 );
+        lsmash_bits_adhoc_cleanup( bits );
+        return ( frame_type == 0 ); /* KEY_FRAME */
+    }
+
+    lsmash_bits_adhoc_cleanup( bits );
+
+    return 0;
+}
+
 uint8_t *obu_av1_assemble_sample
 (
     uint8_t *packetbuf,
     uint32_t length,
-    uint32_t *samplelength
+    uint32_t *samplelength,
+    int *issync
 )
 {
     uint8_t *samplebuf = NULL;
     *samplelength = 0;
+    *issync = 0;
     uint32_t offset = 0;
+    int seen_seq_header = 0;
 
     while( offset < length )
     {
@@ -486,6 +523,15 @@ uint8_t *obu_av1_assemble_sample
         {
             offset += obusize;
             continue;
+        }
+
+        if( obutype == OBU_SEQUENCE_HEADER )
+        {
+            seen_seq_header = 1;
+        }
+        else if( obutype == OBU_FRAME_HEADER && seen_seq_header ) /* spec requires sync samples to have the seq header first */
+        {
+            *issync = obu_av1_parse_uncompressed_frame_type( &packetbuf[offset], obusize );
         }
 
         uint32_t total_size = consumed + obusize + extension + 1;
