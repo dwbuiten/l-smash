@@ -1,9 +1,10 @@
 /*****************************************************************************
  * ivf_imp.c
  *****************************************************************************
- * Copyright (C) 2018 L-SMASH project
+ * Copyright (C) 2018-2020 L-SMASH project
  *
  * Authors: Yusuke Nakamura <muken.the.vfrmaniac@gmail.com>
+ *          Derek Buitenhuis <derek.buitenhuis@gmail.com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -42,8 +43,8 @@ typedef struct
     uint16_t version;       /* = 0 */
     uint16_t header_length;
     uint32_t codec_fourcc;
-    uint16_t width;         /* unused for importing */
-    uint16_t height;        /* unused for importing */
+    uint16_t width;
+    uint16_t height;
     uint32_t frame_rate;
     uint32_t time_scale;
     uint32_t number_of_frames;
@@ -89,8 +90,7 @@ static int ivf_importer_get_access_unit( lsmash_bs_t *bs, importer_t *importer, 
         if( ivf_imp->au_length == 0 )
             return IMPORTER_EOF;
     }
-    //XXX: TRY HACK
-    return 0;//ivf_imp->get_access_unit( bs, prop, ivf_imp->au_length );
+    return 0;
 }
 
 /* TODO: EOF handling, parse AV1 temporal unit to set sample prop */
@@ -220,10 +220,10 @@ static lsmash_video_summary_t *ivf_create_summary( ivf_global_header_t *gh, lsma
     summary->sample_type      = codec_type;
     summary->timescale        = gh->frame_rate;
     summary->timebase         = gh->time_scale;
-    summary->vfr              = 0; /* TODO */
+    summary->vfr              = 0; /* TODO: VFR IVF? Does this actually exist in practice? :( */
     summary->sample_per_field = 0;
-    summary->width            = gh->width;  /* TODO */
-    summary->height           = gh->height; /* TODO */
+    summary->width            = gh->width; /* We'll trust the IVF header for now... */
+    summary->height           = gh->height;
 #if 0
     summary->par_h                 = 1;
     summary->par_v                 = 1;
@@ -267,11 +267,19 @@ static int ivf_importer_probe( importer_t *importer )
         err = LSMASH_ERR_PATCH_WELCOME;
         goto fail;
     }
-//    else if( lsmash_check_codec_type_identical( codec_type, ISOM_CODEC_TYPE_AV01_VIDEO ) )
-//        ivf_imp->get_access_unit = av1_get_access_unit;
+    else if( !lsmash_check_codec_type_identical( codec_type, ISOM_CODEC_TYPE_AV01_VIDEO ) )
+    {
+        /* We only support AV1 for now... */
+        err = LSMASH_ERR_INVALID_DATA;
+        goto fail;
+    }
     lsmash_bs_skip_bytes( bs, gh->header_length );
     /* Parse the first packet to get pixel aspect ratio and color information. */
     uint32_t au_length = lsmash_bs_show_le32( bs, 0 );
+    /*
+     * This is probably not OK, since we're calling av1_obu.c functions directly...
+     * We should probably make it go through proper channels.
+     */
     lsmash_av1_specific_parameters_t *params = obu_av1_parse_seq_header( bs, au_length, 12 );
     if ( !params )
     {
@@ -290,6 +298,7 @@ static int ivf_importer_probe( importer_t *importer )
     if( (err = lsmash_list_add_entry( importer->summaries, summary )) < 0 )
     {
         lsmash_cleanup_summary( (lsmash_summary_t *)summary );
+        err = LSMASH_ERR_NAMELESS;
         goto fail;
     }
     importer->info   = ivf_imp;

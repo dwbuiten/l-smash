@@ -1,7 +1,7 @@
 /*****************************************************************************
  * av1.c
  *****************************************************************************
- * Copyright (C) 2018 L-SMASH project
+ * Copyright (C) 2018-2020 L-SMASH project
  *
  * Authors: Yusuke Nakamura <muken.the.vfrmaniac@gmail.com>
  *          Derek Buitenhuis <derek.buitenhuis@gmail.com>
@@ -35,7 +35,7 @@
         AV1 Bitstream & Decoding Process Specification
             Version 1.0.0
         AV1 Codec ISO Media File Format Binding
-            v1.0.0, 7 September 2018
+            v1.2.0, 12 December 2019
 **********************************************************************************/
 
 #define AV1_CODEC_CONFIGURATION_RECORD_MARKER (1)
